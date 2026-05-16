@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vipin's PDF Suite — Miyee PDF</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2212%22 fill=%22%23e11d48%22/><text x=%2232%22 y=%2244%22 font-family=%22Arial%22 font-size=%2236%22 font-weight=%22bold%22 fill=%22white%22 text-anchor=%22middle%22>M</text></svg>" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://unpkg.com/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+<style>
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #f8fafc; }
+  .dropzone { transition: all 0.2s; }
+  .dropzone.dragover { background: #fef2f2; border-color: #e11d48; }
+  .page-card { transition: transform 0.15s, box-shadow 0.15s; cursor: grab; user-select: none; }
+  .page-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+  .page-card.dragging { opacity: 0.4; cursor: grabbing; }
+  .page-card.drop-target { box-shadow: 0 0 0 3px #e11d48; }
+  .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+  .edit-canvas-wrap { position: relative; display: inline-block; }
+  .edit-overlay { position: absolute; top: 0; left: 0; }
+  .text-layer { position: absolute; top: 0; left: 0; overflow: hidden; opacity: 1; line-height: 1; }
+  .text-layer > span { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+  .text-layer ::selection { background: rgba(59, 130, 246, 0.35); color: transparent; }
+  .annotation { position: absolute; pointer-events: auto; }
+  .ann-text { color: #111; padding: 0; font-size: 14px; background: transparent; cursor: move; }
+  .ann-comment { background: #fef3c7; border: 1px solid #f59e0b; padding: 4px 8px; border-radius: 4px; font-size: 12px; max-width: 220px; color: #78350f; cursor: move; }
+  .ann-inline-input { border: 1px dashed #e11d48; background: rgba(255,255,255,0.92); padding: 2px 4px; font-size: 14px; outline: none; min-width: 60px; }
+  .ann-inline-textarea { border: 1px dashed #e11d48; background: #fef3c7; padding: 4px 8px; border-radius: 4px; font-size: 12px; outline: none; color: #78350f; resize: both; min-width: 120px; min-height: 40px; }
+  .ann-handle { position: absolute; top: -10px; right: -10px; width: 18px; height: 18px; border-radius: 50%; background: #e11d48; color: white; font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; display: none; }
+  .annotation:hover .ann-handle { display: block; }
+  .color-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 0 1px #cbd5e1; cursor: pointer; }
+  .color-swatch.active { box-shadow: 0 0 0 2px #e11d48; }
+  .text-edit-item { position: absolute; white-space: pre; background: transparent; border: 1px dashed transparent; padding: 0; margin: 0; outline: none; transform-origin: 0% 0%; line-height: 1; font-family: sans-serif; color: transparent; caret-color: #e11d48; }
+  .text-edit-item:hover { border-color: rgba(225,29,72,0.4); }
+  .text-edit-item:focus { border-color: #e11d48; background: #ffffff; color: #000; z-index: 10; box-shadow: 0 0 0 2px rgba(225,29,72,0.15); font-family: 'Helvetica', Arial, sans-serif; }
+  .text-edit-item.modified { border-color: #f59e0b; background: #ffffff; color: #000; font-family: 'Helvetica', Arial, sans-serif; }
+  .spinner { border: 3px solid #fee2e2; border-top: 3px solid #e11d48; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+</style>
+</head>
+<body class="text-slate-800">
+<div id="root"></div>
+
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect, useCallback, useMemo } = React;
+const { PDFDocument, StandardFonts, rgb, degrees } = PDFLib;
+
+// ====== UI Primitives ======
+const Button = ({ children, onClick, variant = 'primary', disabled, className = '', ...rest }) => {
+  const variants = {
+    primary: 'bg-rose-600 hover:bg-rose-700 text-white',
+    secondary: 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200',
+    danger: 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200',
+    ghost: 'hover:bg-slate-100 text-slate-600',
+  };
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className={`px-4 py-2 rounded-lg font-medium text-sm transition disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${className}`}
+      {...rest}>
+      {children}
+    </button>
+  );
+};
+
+const Card = ({ title, subtitle, children }) => (
+  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+    {title && <div className="mb-4">
+      <h2 className="text-xl font-bold text-slate-900">{title}</h2>
+      {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
+    </div>}
+    {children}
+  </div>
+);
+
+const Dropzone = ({ accept, multiple, onFiles, label, icon = '📄' }) => {
+  const [drag, setDrag] = useState(false);
+  const inputRef = useRef(null);
+  const handle = (files) => {
+    if (files && files.length) onFiles(Array.from(files));
+  };
+  return (
+    <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+         onDragLeave={() => setDrag(false)}
+         onDrop={(e) => { e.preventDefault(); setDrag(false); handle(e.dataTransfer.files); }}
+         onClick={() => inputRef.current.click()}
+         className={`dropzone cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center ${drag ? 'dragover' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}>
+      <div className="text-5xl mb-3">{icon}</div>
+      <p className="font-semibold text-slate-700">{label}</p>
+      <p className="text-xs text-slate-500 mt-1">Click or drop files here</p>
+      <input ref={inputRef} type="file" accept={accept} multiple={multiple} className="hidden"
+        onChange={(e) => handle(e.target.files)} />
+    </div>
+  );
+};
+
+const Spinner = ({ label }) => (
+  <div className="flex items-center gap-3 text-slate-600 text-sm">
+    <div className="spinner"></div>
+    <span>{label || 'Working...'}</span>
+  </div>
+);
+
+// ====== Helpers ======
+const downloadBlob = (bytes, filename, type = 'application/pdf') => {
+  const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const renderPageThumb = async (pdfBytes, pageIndex, scale = 0.3) => {
+  const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(pageIndex + 1);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width; canvas.height = viewport.height;
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  return canvas.toDataURL('image/png');
+};
+
+// ====== Tool: Merge PDFs ======
+const MergeTool = () => {
+  const [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  const addFiles = (newFiles) => {
+    setFiles((prev) => [...prev, ...newFiles.filter(f => f.type === 'application/pdf')]);
+  };
+  const remove = (i) => setFiles((p) => p.filter((_, idx) => idx !== i));
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= files.length) return;
+    const copy = [...files];
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    setFiles(copy);
+  };
+
+  const merge = async () => {
+    if (files.length < 2) return alert('Add at least 2 PDFs to merge.');
+    setBusy(true);
+    try {
+      const out = await PDFDocument.create();
+      for (const f of files) {
+        const bytes = await f.arrayBuffer();
+        const src = await PDFDocument.load(bytes);
+        const pages = await out.copyPages(src, src.getPageIndices());
+        pages.forEach((p) => out.addPage(p));
+      }
+      const bytes = await out.save();
+      downloadBlob(bytes, 'merged.pdf');
+    } catch (e) { alert('Merge failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card title="Merge / Combine PDF" subtitle="Combine multiple PDFs into a single document in your chosen order.">
+      <Dropzone accept="application/pdf" multiple onFiles={addFiles} icon="🔗"
+        label="Add PDF files to merge" />
+      {files.length > 0 && (
+        <div className="mt-6 space-y-2">
+          {files.map((f, i) => (
+            <div key={i} className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="text-slate-500 font-mono text-xs w-6">{i + 1}.</div>
+              <div className="flex-1 truncate text-sm font-medium">{f.name}</div>
+              <div className="text-xs text-slate-500">{(f.size / 1024).toFixed(1)} KB</div>
+              <Button variant="ghost" onClick={() => move(i, -1)} disabled={i === 0}>↑</Button>
+              <Button variant="ghost" onClick={() => move(i, 1)} disabled={i === files.length - 1}>↓</Button>
+              <Button variant="danger" onClick={() => remove(i)}>Remove</Button>
+            </div>
+          ))}
+          <div className="flex items-center gap-3 pt-4">
+            <Button onClick={merge} disabled={busy || files.length < 2}>
+              {busy ? 'Merging...' : `Merge ${files.length} PDFs`}
+            </Button>
+            <Button variant="secondary" onClick={() => setFiles([])}>Clear</Button>
+            {busy && <Spinner label="Merging..." />}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ====== Tool: Organize PDF ======
+const OrganizeTool = () => {
+  const [pdfBytes, setPdfBytes] = useState(null);
+  const [pages, setPages] = useState([]); // {id, thumb, source: 'orig'|'blank', origIndex?}
+  const [busy, setBusy] = useState(false);
+  const [dragIdx, setDragIdx] = useState(null);
+  const [dropIdx, setDropIdx] = useState(null);
+  const idCounter = useRef(0);
+
+  const loadFile = async (files) => {
+    const f = files[0];
+    if (!f || f.type !== 'application/pdf') return;
+    setBusy(true);
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      setPdfBytes(bytes);
+      const doc = await PDFDocument.load(bytes);
+      const count = doc.getPageCount();
+      const newPages = [];
+      for (let i = 0; i < count; i++) {
+        const thumb = await renderPageThumb(bytes, i);
+        newPages.push({ id: ++idCounter.current, thumb, source: 'orig', origIndex: i });
+      }
+      setPages(newPages);
+    } catch (e) { alert('Load failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const deletePage = (id) => setPages((p) => p.filter(pg => pg.id !== id));
+  const addBlank = (afterIdx) => {
+    const blank = { id: ++idCounter.current, thumb: null, source: 'blank' };
+    setPages((p) => {
+      const copy = [...p];
+      copy.splice(afterIdx + 1, 0, blank);
+      return copy;
+    });
+  };
+
+  const onDragStart = (i) => setDragIdx(i);
+  const onDragOverItem = (i, e) => { e.preventDefault(); setDropIdx(i); };
+  const onDrop = (i) => {
+    if (dragIdx === null || dragIdx === i) { setDragIdx(null); setDropIdx(null); return; }
+    setPages((p) => {
+      const copy = [...p];
+      const [moved] = copy.splice(dragIdx, 1);
+      copy.splice(i, 0, moved);
+      return copy;
+    });
+    setDragIdx(null); setDropIdx(null);
+  };
+
+  const addPagesFromFile = async (files) => {
+    const f = files[0]; if (!f) return;
+    setBusy(true);
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const doc = await PDFDocument.load(bytes);
+      const count = doc.getPageCount();
+      const additions = [];
+      for (let i = 0; i < count; i++) {
+        const thumb = await renderPageThumb(bytes, i);
+        additions.push({ id: ++idCounter.current, thumb, source: 'external', bytes, origIndex: i });
+      }
+      setPages((p) => [...p, ...additions]);
+    } catch (e) { alert('Add pages failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const save = async () => {
+    if (!pages.length) return alert('No pages to save.');
+    setBusy(true);
+    try {
+      const out = await PDFDocument.create();
+      const srcCache = new Map();
+      const orig = pdfBytes ? await PDFDocument.load(pdfBytes) : null;
+      if (orig) srcCache.set('orig', orig);
+      for (const pg of pages) {
+        if (pg.source === 'blank') {
+          out.addPage([595, 842]); // A4
+        } else if (pg.source === 'orig') {
+          const [copied] = await out.copyPages(orig, [pg.origIndex]);
+          out.addPage(copied);
+        } else if (pg.source === 'external') {
+          let src = srcCache.get(pg.id + '');
+          if (!src) { src = await PDFDocument.load(pg.bytes); srcCache.set(pg.id + '', src); }
+          const [copied] = await out.copyPages(src, [pg.origIndex]);
+          out.addPage(copied);
+        }
+      }
+      const bytes = await out.save();
+      downloadBlob(bytes, 'organized.pdf');
+    } catch (e) { alert('Save failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  if (!pdfBytes) {
+    return (
+      <Card title="Organize PDF" subtitle="Reorder, delete, or add pages with drag and drop.">
+        <Dropzone accept="application/pdf" onFiles={loadFile} icon="🗂️" label="Open a PDF to organize" />
+        {busy && <div className="mt-4"><Spinner label="Loading pages..." /></div>}
+      </Card>
+    );
+  }
+
+  return (
+    <Card title="Organize PDF" subtitle="Drag thumbnails to reorder. Delete pages or insert blanks.">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <Button onClick={save} disabled={busy}>{busy ? 'Saving...' : 'Save Organized PDF'}</Button>
+        <label className="cursor-pointer">
+          <input type="file" accept="application/pdf" className="hidden"
+            onChange={(e) => addPagesFromFile(Array.from(e.target.files))} />
+          <span className="px-4 py-2 rounded-lg font-medium text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 inline-block">
+            + Add Pages from PDF
+          </span>
+        </label>
+        <Button variant="secondary" onClick={() => { setPdfBytes(null); setPages([]); }}>Open Another</Button>
+        {busy && <Spinner />}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {pages.map((pg, i) => (
+          <div key={pg.id}
+            draggable
+            onDragStart={() => onDragStart(i)}
+            onDragOver={(e) => onDragOverItem(i, e)}
+            onDrop={() => onDrop(i)}
+            onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+            className={`page-card bg-white rounded-lg border border-slate-200 overflow-hidden ${dragIdx === i ? 'dragging' : ''} ${dropIdx === i && dragIdx !== i ? 'drop-target' : ''}`}>
+            <div className="aspect-[1/1.4] bg-slate-100 flex items-center justify-center overflow-hidden">
+              {pg.thumb ? <img src={pg.thumb} className="w-full h-full object-contain" alt="" />
+                : <div className="text-slate-400 text-xs">Blank Page</div>}
+            </div>
+            <div className="p-2 flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-700">Page {i + 1}</span>
+              <div className="flex gap-1">
+                <button onClick={() => addBlank(i)} title="Insert blank after"
+                  className="px-1.5 py-0.5 hover:bg-slate-100 rounded text-slate-600">+</button>
+                <button onClick={() => deletePage(pg.id)} title="Delete"
+                  className="px-1.5 py-0.5 hover:bg-red-100 text-red-600 rounded">✕</button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+};
+
+// ====== Tool: Word to PDF ======
+const WordToPdfTool = () => {
+  const [busy, setBusy] = useState(false);
+  const [html, setHtml] = useState('');
+  const [filename, setFilename] = useState('');
+  const previewRef = useRef(null);
+
+  const handleFile = async (files) => {
+    const f = files[0]; if (!f) return;
+    if (!f.name.match(/\.docx?$/i)) return alert('Please choose a .docx file.');
+    setBusy(true);
+    try {
+      const buf = await f.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+      setHtml(result.value);
+      setFilename(f.name.replace(/\.docx?$/i, '.pdf'));
+    } catch (e) { alert('Conversion failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const exportPdf = async () => {
+    if (!previewRef.current) return;
+    setBusy(true);
+    try {
+      const { jsPDF } = window.jspdf;
+      const node = previewRef.current;
+      const canvas = await html2canvas(node, { scale: 2, backgroundColor: '#ffffff' });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const ratio = canvas.width / pageW;
+      const totalHeight = canvas.height / ratio;
+      let y = 0;
+      while (y < totalHeight) {
+        if (y > 0) pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, -y, pageW, totalHeight);
+        y += pageH;
+      }
+      pdf.save(filename || 'document.pdf');
+    } catch (e) { alert('Export failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card title="Convert Word to PDF" subtitle="Upload a .docx file. We render it in-browser and export as PDF.">
+      <Dropzone accept=".doc,.docx" onFiles={handleFile} icon="📝" label="Choose a Word document (.docx)" />
+      {busy && <div className="mt-4"><Spinner label="Converting..." /></div>}
+      {html && (
+        <div className="mt-6">
+          <div className="flex items-center gap-3 mb-3">
+            <Button onClick={exportPdf} disabled={busy}>Download PDF</Button>
+            <input value={filename} onChange={(e) => setFilename(e.target.value)}
+              className="px-3 py-2 border border-slate-300 rounded-lg text-sm flex-1 max-w-xs" />
+            <Button variant="secondary" onClick={() => setHtml('')}>Clear</Button>
+          </div>
+          <div className="border border-slate-200 rounded-lg p-2 bg-slate-50 max-h-[60vh] overflow-auto scroll-thin">
+            <div ref={previewRef} className="bg-white p-10 mx-auto shadow-sm" style={{ width: '210mm', minHeight: '297mm' }}>
+              <div dangerouslySetInnerHTML={{ __html: html }} />
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mt-2">Note: .docx is rendered via Mammoth.js — complex formatting (headers, footnotes, embedded objects) may simplify.</p>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ====== Tool: Image to PDF ======
+const ImageToPdfTool = () => {
+  const [images, setImages] = useState([]); // {file, url}
+  const [busy, setBusy] = useState(false);
+  const [pageSize, setPageSize] = useState('A4');
+  const [orientation, setOrientation] = useState('auto');
+
+  const addImages = (files) => {
+    const imgs = files.filter(f => f.type.startsWith('image/'));
+    const mapped = imgs.map(f => ({ file: f, url: URL.createObjectURL(f) }));
+    setImages((p) => [...p, ...mapped]);
+  };
+  const remove = (i) => setImages((p) => p.filter((_, idx) => idx !== i));
+  const move = (i, dir) => {
+    const j = i + dir; if (j < 0 || j >= images.length) return;
+    const c = [...images]; [c[i], c[j]] = [c[j], c[i]]; setImages(c);
+  };
+
+  const build = async () => {
+    if (!images.length) return;
+    setBusy(true);
+    try {
+      const pdf = await PDFDocument.create();
+      const sizes = { A4: [595, 842], Letter: [612, 792] };
+      const [pw, ph] = sizes[pageSize];
+
+      for (const item of images) {
+        const bytes = new Uint8Array(await item.file.arrayBuffer());
+        let img;
+        if (item.file.type.includes('png')) img = await pdf.embedPng(bytes);
+        else img = await pdf.embedJpg(bytes);
+
+        let width = pw, height = ph;
+        if (orientation === 'auto') {
+          if (img.width > img.height) { width = ph; height = pw; }
+        } else if (orientation === 'landscape') { width = ph; height = pw; }
+
+        const page = pdf.addPage([width, height]);
+        const margin = 20;
+        const maxW = width - margin * 2;
+        const maxH = height - margin * 2;
+        const scale = Math.min(maxW / img.width, maxH / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        page.drawImage(img, { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h });
+      }
+      const bytes = await pdf.save();
+      downloadBlob(bytes, 'images.pdf');
+    } catch (e) { alert('Build failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card title="Convert Images to PDF" subtitle="JPG / PNG → a single PDF. Reorder before export.">
+      <Dropzone accept="image/*" multiple onFiles={addImages} icon="🖼️" label="Add images" />
+      {images.length > 0 && (
+        <>
+          <div className="flex flex-wrap items-center gap-3 mt-6 mb-4">
+            <label className="text-sm text-slate-600">Page size:
+              <select className="ml-2 px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
+                value={pageSize} onChange={(e) => setPageSize(e.target.value)}>
+                <option>A4</option><option>Letter</option>
+              </select>
+            </label>
+            <label className="text-sm text-slate-600">Orientation:
+              <select className="ml-2 px-3 py-1.5 border border-slate-300 rounded-lg text-sm"
+                value={orientation} onChange={(e) => setOrientation(e.target.value)}>
+                <option value="auto">Auto</option>
+                <option value="portrait">Portrait</option>
+                <option value="landscape">Landscape</option>
+              </select>
+            </label>
+            <Button onClick={build} disabled={busy}>{busy ? 'Building...' : `Create PDF (${images.length} pages)`}</Button>
+            <Button variant="secondary" onClick={() => setImages([])}>Clear</Button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {images.map((img, i) => (
+              <div key={i} className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                <img src={img.url} className="w-full h-32 object-contain bg-slate-100" />
+                <div className="p-2 text-xs">
+                  <div className="truncate font-medium">{img.file.name}</div>
+                  <div className="flex gap-1 mt-1">
+                    <button onClick={() => move(i, -1)} className="px-2 py-0.5 hover:bg-slate-100 rounded">↑</button>
+                    <button onClick={() => move(i, 1)} className="px-2 py-0.5 hover:bg-slate-100 rounded">↓</button>
+                    <button onClick={() => remove(i)} className="px-2 py-0.5 hover:bg-red-100 text-red-600 rounded ml-auto">✕</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+};
+
+// ====== Tool: Edit Text (Adobe-style direct edit) ======
+const TextEditPage = ({ pageIndex, pdfBytes, scale, items, setItems, ocrMode,
+  ocrItems, onPageDims, busyPage }) => {
+  const canvasRef = useRef(null);
+  const [dims, setDims] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (!pdfBytes) return;
+    let cancelled = false;
+    (async () => {
+      const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+      if (cancelled) return;
+      const page = await pdf.getPage(pageIndex + 1);
+      const vp = page.getViewport({ scale });
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      if (cancelled) return;
+      setDims({ w: vp.width, h: vp.height });
+      onPageDims(pageIndex, { w: vp.width, h: vp.height, scale });
+
+      if (!ocrMode && !items[pageIndex]) {
+        const textContent = await page.getTextContent();
+        const built = [];
+        textContent.items.forEach((item, idx) => {
+          if (!item.str || !item.str.trim()) return;
+          const tx = pdfjsLib.Util.transform(vp.transform, item.transform);
+          const fontHeight = Math.hypot(tx[2], tx[3]);
+          const width = (item.width || (item.str.length * fontHeight * 0.5)) * vp.scale;
+          built.push({
+            id: `${pageIndex}-${idx}`,
+            original: item.str,
+            current: item.str,
+            x: tx[4],
+            y: tx[5] - fontHeight,
+            width: width,
+            height: fontHeight,
+            fontSize: fontHeight,
+          });
+        });
+        setItems((prev) => ({ ...prev, [pageIndex]: built }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pdfBytes, pageIndex, scale, ocrMode]);
+
+  // When ocrItems for this page arrive, store as editable items
+  useEffect(() => {
+    if (ocrMode && ocrItems && ocrItems[pageIndex] && !items[pageIndex]) {
+      setItems((prev) => ({ ...prev, [pageIndex]: ocrItems[pageIndex] }));
+    }
+  }, [ocrMode, ocrItems, pageIndex]);
+
+  const pageItems = items[pageIndex] || [];
+
+  const updateItem = (id, value) => {
+    setItems((prev) => ({
+      ...prev,
+      [pageIndex]: prev[pageIndex].map(it => it.id === id ? { ...it, current: value } : it),
+    }));
+  };
+
+  return (
+    <div className="mx-auto my-4" style={{ width: dims.w || 'auto' }}>
+      <div className="text-xs text-slate-500 mb-1 text-center font-medium">
+        Page {pageIndex + 1}
+        {busyPage === pageIndex && <span className="ml-2 text-amber-600">⟳ OCR running...</span>}
+      </div>
+      <div className="edit-canvas-wrap shadow-md" style={{ width: dims.w, height: dims.h }}>
+        <canvas ref={canvasRef} className="bg-white block" />
+        <div className="edit-overlay" style={{ width: dims.w, height: dims.h, pointerEvents: 'none' }}>
+          {pageItems.map((it) => (
+            <input key={it.id}
+              type="text"
+              value={it.current}
+              onChange={(e) => updateItem(it.id, e.target.value)}
+              className={`text-edit-item ${it.current !== it.original ? 'modified' : ''}`}
+              style={{
+                left: it.x,
+                top: it.y,
+                width: Math.max(it.width, 30),
+                height: it.height + 4,
+                fontSize: it.fontSize + 'px',
+                pointerEvents: 'auto',
+                color: '#000',
+              }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TextEditTool = () => {
+  const [pdfBytes, setPdfBytes] = useState(null);
+  const [pageCount, setPageCount] = useState(0);
+  const [items, setItems] = useState({}); // pageIndex -> [items]
+  const [ocrItems, setOcrItems] = useState({});
+  const [ocrMode, setOcrMode] = useState(false);
+  const [zoom, setZoom] = useState(1.5);
+  const [busy, setBusy] = useState(false);
+  const [busyPage, setBusyPage] = useState(-1);
+  const [progress, setProgress] = useState('');
+  const pageDimsRef = useRef({});
+
+  const onPageDims = (i, d) => { pageDimsRef.current[i] = d; };
+
+  const load = async (files) => {
+    const f = files[0]; if (!f) return;
+    setBusy(true);
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      setPdfBytes(bytes);
+      const doc = await PDFDocument.load(bytes);
+      setPageCount(doc.getPageCount());
+      setItems({});
+      setOcrItems({});
+      setOcrMode(false);
+
+      // Detect if PDF has very little native text → suggest OCR
+      const probe = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+      let totalChars = 0;
+      const pagesToCheck = Math.min(probe.numPages, 3);
+      for (let i = 0; i < pagesToCheck; i++) {
+        const p = await probe.getPage(i + 1);
+        const tc = await p.getTextContent();
+        totalChars += tc.items.reduce((s, it) => s + (it.str?.length || 0), 0);
+      }
+      if (totalChars < 20 * pagesToCheck) {
+        if (confirm('This looks like a scanned PDF with little extractable text. Run OCR to make it editable?')) {
+          await runOcr(bytes, probe.numPages);
+        }
+      }
+    } catch (e) { alert('Load failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const runOcr = async (bytes, count) => {
+    setBusy(true);
+    setOcrMode(true);
+    setProgress('Loading OCR engine...');
+    try {
+      const worker = await Tesseract.createWorker('eng', 1, {
+        logger: (m) => setProgress(`${m.status} ${(m.progress * 100 || 0).toFixed(0)}%`),
+      });
+      const newItems = {};
+      const pdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+      for (let i = 0; i < count; i++) {
+        setBusyPage(i);
+        setProgress(`Recognizing page ${i + 1} / ${count}...`);
+        const page = await pdf.getPage(i + 1);
+        const vp = page.getViewport({ scale: zoom });
+        const canvas = document.createElement('canvas');
+        canvas.width = vp.width; canvas.height = vp.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+        const { data } = await worker.recognize(canvas, {}, { blocks: true });
+        const words = data.words || [];
+        newItems[i] = words.filter(w => w.text && w.text.trim()).map((w, idx) => ({
+          id: `ocr-${i}-${idx}`,
+          original: w.text,
+          current: w.text,
+          x: w.bbox.x0,
+          y: w.bbox.y0,
+          width: w.bbox.x1 - w.bbox.x0,
+          height: w.bbox.y1 - w.bbox.y0,
+          fontSize: (w.bbox.y1 - w.bbox.y0) * 0.85,
+        }));
+      }
+      setOcrItems(newItems);
+      setItems(newItems);
+      await worker.terminate();
+      setBusyPage(-1);
+      setProgress('OCR complete · text is now editable');
+    } catch (e) { alert('OCR failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const triggerOcr = async () => {
+    if (!pdfBytes) return;
+    await runOcr(pdfBytes, pageCount);
+  };
+
+  const savePdf = async () => {
+    if (!pdfBytes) return;
+    setBusy(true);
+    try {
+      const doc = await PDFDocument.load(pdfBytes);
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const pdfPages = doc.getPages();
+
+      for (const [pageIdxStr, pageItems] of Object.entries(items)) {
+        const pageIdx = +pageIdxStr;
+        const page = pdfPages[pageIdx];
+        const { width, height } = page.getSize();
+        const dims = pageDimsRef.current[pageIdx];
+        const renderScale = dims ? dims.w / width : zoom;
+
+        for (const it of pageItems) {
+          if (it.current === it.original) continue;
+          // Cover original text area with white
+          const xPdf = it.x / renderScale;
+          const yPdf = height - (it.y + it.height) / renderScale;
+          const wPdf = Math.max(it.width / renderScale, font.widthOfTextAtSize(it.current, it.fontSize / renderScale));
+          const hPdf = (it.height + 4) / renderScale;
+          page.drawRectangle({
+            x: xPdf - 1, y: yPdf - 1,
+            width: wPdf + 2, height: hPdf + 2,
+            color: rgb(1, 1, 1),
+          });
+          // Draw new text
+          if (it.current.trim()) {
+            page.drawText(it.current, {
+              x: xPdf,
+              y: yPdf + 2,
+              size: it.fontSize / renderScale,
+              font,
+              color: rgb(0, 0, 0),
+            });
+          }
+        }
+      }
+      const bytes = await doc.save();
+      downloadBlob(bytes, 'text-edited.pdf');
+    } catch (e) { alert('Save failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  if (!pdfBytes) {
+    return (
+      <Card title="Edit Text (Adobe-style)"
+        subtitle="Click text directly on the page to edit. Works on native PDFs and scanned PDFs (via OCR).">
+        <Dropzone accept="application/pdf" onFiles={load} icon="🅣" label="Open a PDF to edit text" />
+        {busy && <div className="mt-4"><Spinner label={progress || 'Loading...'} /></div>}
+      </Card>
+    );
+  }
+
+  const modifiedCount = Object.values(items).flat().filter(it => it.current !== it.original).length;
+
+  return (
+    <Card title="Edit Text"
+      subtitle={`${pageCount} pages · click any text to edit it inline · ${modifiedCount} edit(s) pending`}>
+      <div className="flex flex-wrap items-center gap-2 mb-3 sticky top-16 bg-white z-10 py-1">
+        <Button onClick={savePdf} disabled={busy || modifiedCount === 0}>
+          {busy ? 'Saving...' : `Save (${modifiedCount} change${modifiedCount === 1 ? '' : 's'})`}
+        </Button>
+        <Button variant="secondary" onClick={triggerOcr} disabled={busy}>
+          {ocrMode ? 'Re-run OCR' : 'Run OCR (for scanned PDFs)'}
+        </Button>
+        <label className="text-sm text-slate-600 flex items-center gap-1 ml-2">
+          Zoom:
+          <select value={zoom} onChange={(e) => { setZoom(+e.target.value); setItems({}); setOcrItems({}); }}
+            className="ml-1 px-2 py-1 border border-slate-300 rounded text-sm">
+            <option value={1}>100%</option>
+            <option value={1.25}>125%</option>
+            <option value={1.5}>150%</option>
+            <option value={2}>200%</option>
+          </select>
+        </label>
+        <div className="ml-auto flex items-center gap-2">
+          {busy && <Spinner label={progress} />}
+          <Button variant="secondary" onClick={() => { setPdfBytes(null); setItems({}); setOcrItems({}); setOcrMode(false); }}>Open Another</Button>
+        </div>
+      </div>
+
+      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 mb-4">
+        <strong>How it works:</strong> Each text fragment becomes an editable input. Type to change it.
+        Modified items get a yellow border. On save, the original text is covered with white and replaced with your edit (Helvetica). For scanned PDFs, click <em>Run OCR</em> first.
+      </div>
+
+      <div className="bg-slate-100 rounded-lg p-4 overflow-auto scroll-thin" style={{ maxHeight: '75vh' }}>
+        {Array.from({ length: pageCount }, (_, i) => (
+          <TextEditPage key={`${i}-${zoom}-${ocrMode}`} pageIndex={i} pdfBytes={pdfBytes} scale={zoom}
+            items={items} setItems={setItems} ocrMode={ocrMode}
+            ocrItems={ocrItems} onPageDims={onPageDims} busyPage={busyPage} />
+        ))}
+      </div>
+    </Card>
+  );
+};
+
+// ====== Tool: OCR ======
+const OcrTool = () => {
+  const [pdfBytes, setPdfBytes] = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [pages, setPages] = useState([]); // [{ index, dataURL, text, status }]
+  const [busy, setBusy] = useState(false);
+  const [lang, setLang] = useState('eng');
+  const [progress, setProgress] = useState({ current: 0, total: 0, info: '' });
+  const workerRef = useRef(null);
+
+  const load = async (files) => {
+    const f = files[0]; if (!f) return;
+    setBusy(true); setPages([]); setFileName(f.name);
+    try {
+      if (f.type === 'application/pdf') {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        setPdfBytes(bytes);
+        const pdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+        const items = [];
+        for (let i = 0; i < pdf.numPages; i++) {
+          const page = await pdf.getPage(i + 1);
+          const vp = page.getViewport({ scale: 2.0 });
+          const canvas = document.createElement('canvas');
+          canvas.width = vp.width; canvas.height = vp.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+          items.push({ index: i, dataURL: canvas.toDataURL('image/png'), text: '', status: 'pending' });
+        }
+        setPages(items);
+      } else if (f.type.startsWith('image/')) {
+        const url = URL.createObjectURL(f);
+        setPdfBytes(null);
+        setPages([{ index: 0, dataURL: url, text: '', status: 'pending' }]);
+      } else {
+        alert('Please choose a PDF or image file.');
+      }
+    } catch (e) { alert('Load failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const runOcr = async () => {
+    if (!pages.length) return;
+    setBusy(true);
+    setProgress({ current: 0, total: pages.length, info: 'Loading OCR engine...' });
+    try {
+      const worker = await Tesseract.createWorker(lang, 1, {
+        logger: (m) => setProgress((p) => ({ ...p, info: `${m.status} ${(m.progress * 100 || 0).toFixed(0)}%` })),
+      });
+      workerRef.current = worker;
+      const updated = [...pages];
+      for (let i = 0; i < updated.length; i++) {
+        setProgress({ current: i + 1, total: updated.length, info: `Recognizing page ${i + 1}...` });
+        updated[i] = { ...updated[i], status: 'processing' };
+        setPages([...updated]);
+        const { data } = await worker.recognize(updated[i].dataURL);
+        updated[i] = { ...updated[i], text: data.text, status: 'done' };
+        setPages([...updated]);
+      }
+      await worker.terminate();
+      setProgress({ current: pages.length, total: pages.length, info: 'Complete' });
+    } catch (e) { alert('OCR failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const downloadText = () => {
+    const all = pages.map((p, i) => `--- Page ${i + 1} ---\n${p.text}`).join('\n\n');
+    downloadBlob(new Blob([all], { type: 'text/plain' }), (fileName || 'ocr').replace(/\.[^.]+$/, '') + '.txt', 'text/plain');
+  };
+
+  const downloadSearchablePdf = async () => {
+    setBusy(true);
+    try {
+      const out = await PDFDocument.create();
+      const font = await out.embedFont(StandardFonts.Helvetica);
+      for (const p of pages) {
+        const imgBytes = await fetch(p.dataURL).then(r => r.arrayBuffer());
+        const img = await out.embedPng(imgBytes);
+        const page = out.addPage([img.width / 2, img.height / 2]); // /2 to undo scale 2
+        page.drawImage(img, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
+        if (p.text) {
+          // overlay text near top so it's selectable/searchable; tiny near-invisible
+          const lines = p.text.split('\n').filter(l => l.trim());
+          let y = page.getHeight() - 10;
+          for (const ln of lines) {
+            page.drawText(ln.slice(0, 200), { x: 4, y, size: 6, font, color: rgb(1, 1, 1), opacity: 0.01 });
+            y -= 7;
+            if (y < 10) break;
+          }
+        }
+      }
+      const bytes = await out.save();
+      downloadBlob(bytes, (fileName || 'ocr').replace(/\.[^.]+$/, '') + '-searchable.pdf');
+    } catch (e) { alert('Export failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card title="OCR — Extract Text from PDFs / Images"
+      subtitle="Runs Tesseract.js in your browser. Works on scanned PDFs and images.">
+      {!pages.length && <Dropzone accept="application/pdf,image/*" onFiles={load} icon="🔎" label="Open a scanned PDF or image" />}
+      {busy && !pages.length && <div className="mt-4"><Spinner label="Rendering pages..." /></div>}
+      {pages.length > 0 && (
+        <>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <label className="text-sm text-slate-600">Language:
+              <select className="ml-2 px-2 py-1 border border-slate-300 rounded-lg text-sm"
+                value={lang} onChange={(e) => setLang(e.target.value)} disabled={busy}>
+                <option value="eng">English</option>
+                <option value="hin">Hindi</option>
+                <option value="fra">French</option>
+                <option value="deu">German</option>
+                <option value="spa">Spanish</option>
+                <option value="chi_sim">Chinese (Simplified)</option>
+                <option value="ara">Arabic</option>
+                <option value="jpn">Japanese</option>
+              </select>
+            </label>
+            <Button onClick={runOcr} disabled={busy}>
+              {busy ? `OCR ${progress.current}/${progress.total}` : `Run OCR on ${pages.length} page(s)`}
+            </Button>
+            <Button variant="secondary" onClick={downloadText}
+              disabled={busy || !pages.some(p => p.status === 'done')}>Download .txt</Button>
+            <Button variant="secondary" onClick={downloadSearchablePdf}
+              disabled={busy || !pages.some(p => p.status === 'done')}>Download Searchable PDF</Button>
+            <Button variant="secondary" onClick={() => { setPages([]); setPdfBytes(null); }}>Clear</Button>
+          </div>
+          {busy && <div className="mb-4 text-xs text-slate-500">{progress.info}</div>}
+          <div className="space-y-4 max-h-[70vh] overflow-auto scroll-thin pr-2">
+            {pages.map((p, i) => (
+              <div key={i} className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-sm">
+                  <span className="font-semibold">Page {i + 1}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${p.status === 'done' ? 'bg-green-100 text-green-700' : p.status === 'processing' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                    {p.status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
+                  <img src={p.dataURL} className="w-full border border-slate-200 rounded" />
+                  <textarea readOnly value={p.text} placeholder="Text will appear here after OCR..."
+                    className="w-full h-64 md:h-auto p-3 border border-slate-200 rounded font-mono text-xs scroll-thin" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+};
+
+// ====== Tool: Edit PDF ======
+const HIGHLIGHT_COLORS = ['#fde047', '#86efac', '#93c5fd', '#fca5a5', '#f9a8d4', '#fdba74'];
+const REDACT_COLORS = ['#ffffff', '#000000', '#1e3a8a', '#7f1d1d', '#9ca3af', '#fde047'];
+
+const hexToRgb01 = (hex) => {
+  const m = hex.replace('#', '');
+  const n = parseInt(m, 16);
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
+};
+
+const PageEditor = ({ pageIndex, pdfBytes, scale, tool,
+  annotations, setAnnotations, idRef,
+  highlightColor, redactColor, textColor, textSize,
+  pending, setPending, onPageDims }) => {
+  const canvasRef = useRef(null);
+  const textLayerRef = useRef(null);
+  const overlayRef = useRef(null);
+  const [dims, setDims] = useState({ w: 0, h: 0 });
+  const [dragging, setDragging] = useState(null);
+  const [movingId, setMovingId] = useState(null);
+  const moveStartRef = useRef(null);
+
+  useEffect(() => {
+    if (!pdfBytes) return;
+    let cancelled = false;
+    (async () => {
+      const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+      if (cancelled) return;
+      const page = await pdf.getPage(pageIndex + 1);
+      const vp = page.getViewport({ scale });
+      const canvas = canvasRef.current;
+      if (!canvas || cancelled) return;
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      if (cancelled) return;
+      setDims({ w: vp.width, h: vp.height });
+      onPageDims && onPageDims(pageIndex, { w: vp.width, h: vp.height, scale });
+
+      const textContent = await page.getTextContent();
+      const layer = textLayerRef.current;
+      if (layer && !cancelled) {
+        layer.innerHTML = '';
+        layer.style.width = vp.width + 'px';
+        layer.style.height = vp.height + 'px';
+        textContent.items.forEach((item) => {
+          if (!item.str) return;
+          const tx = pdfjsLib.Util.transform(vp.transform, item.transform);
+          const fontHeight = Math.hypot(tx[2], tx[3]);
+          const span = document.createElement('span');
+          span.textContent = item.str;
+          span.style.left = tx[4] + 'px';
+          span.style.top = (tx[5] - fontHeight) + 'px';
+          span.style.fontSize = fontHeight + 'px';
+          span.style.fontFamily = item.fontName || 'sans-serif';
+          const width = item.width * vp.scale;
+          if (width) span.style.width = width + 'px';
+          layer.appendChild(span);
+        });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pdfBytes, pageIndex, scale]);
+
+  const overlayCoords = (e) => {
+    const rect = overlayRef.current.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const onMouseDown = (e) => {
+    if (movingId) return;
+    if (tool === 'select') return;
+    // If a pending editor is open on THIS page, ignore overlay clicks
+    if (pending && pending.page === pageIndex) return;
+    // Clicking somewhere else commits any pending elsewhere
+    if (pending) { setPending(null); return; }
+    const { x, y } = overlayCoords(e);
+    if (tool === 'text') {
+      setPending({ type: 'text', page: pageIndex, x, y, value: '' });
+    } else if (tool === 'comment') {
+      setPending({ type: 'comment', page: pageIndex, x, y, value: '' });
+    } else if (tool === 'highlight' || tool === 'redact') {
+      setDragging({ id: ++idRef.current, type: tool,
+        color: tool === 'highlight' ? highlightColor : redactColor,
+        startX: x, startY: y, x, y, w: 0, h: 0 });
+    }
+  };
+  const onMouseMove = (e) => {
+    if (movingId !== null) {
+      const { x, y } = overlayCoords(e);
+      const { dx, dy } = moveStartRef.current;
+      setAnnotations((a) => a.map(an => an.id === movingId ? { ...an, x: x - dx, y: y - dy } : an));
+      return;
+    }
+    if (!dragging) return;
+    const { x, y } = overlayCoords(e);
+    setDragging((d) => ({ ...d, x: Math.min(d.startX, x), y: Math.min(d.startY, y),
+      w: Math.abs(x - d.startX), h: Math.abs(y - d.startY) }));
+  };
+  const onMouseUp = () => {
+    if (movingId !== null) { setMovingId(null); return; }
+    if (dragging && dragging.w > 4 && dragging.h > 4) {
+      setAnnotations((a) => [...a, { id: dragging.id, page: pageIndex, type: dragging.type,
+        x: dragging.x, y: dragging.y, w: dragging.w, h: dragging.h, color: dragging.color }]);
+    }
+    setDragging(null);
+  };
+
+  const startMove = (e, ann) => {
+    e.stopPropagation();
+    const { x, y } = overlayCoords(e);
+    moveStartRef.current = { dx: x - ann.x, dy: y - ann.y };
+    setMovingId(ann.id);
+  };
+
+  const removeAnn = (id, e) => { if (e) e.stopPropagation(); setAnnotations((a) => a.filter(x => x.id !== id)); };
+
+  const pageAnns = annotations.filter(a => a.page === pageIndex);
+  const cursor = tool === 'select' ? 'text' : 'crosshair';
+  const showPending = pending && pending.page === pageIndex;
+
+  return (
+    <div className="mx-auto my-4" style={{ width: dims.w || 'auto' }}>
+      <div className="text-xs text-slate-500 mb-1 text-center font-medium">Page {pageIndex + 1}</div>
+      <div className="edit-canvas-wrap shadow-md">
+        <canvas ref={canvasRef} className="bg-white block" />
+        <div ref={textLayerRef} className="text-layer"
+          style={{ pointerEvents: tool === 'select' ? 'auto' : 'none' }} />
+        <div ref={overlayRef}
+          className="edit-overlay"
+          style={{ width: dims.w, height: dims.h, cursor, pointerEvents: tool === 'select' ? 'none' : 'auto' }}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}>
+          {pageAnns.map((a) => (
+            <div key={a.id} className="annotation"
+              style={{ left: a.x, top: a.y, width: a.w, height: a.h }}>
+              {a.type === 'highlight' && (
+                <div onMouseDown={(e) => startMove(e, a)}
+                  style={{ width: '100%', height: '100%', background: a.color, opacity: 0.4, cursor: 'move' }} />
+              )}
+              {a.type === 'redact' && (
+                <div onMouseDown={(e) => startMove(e, a)}
+                  style={{ width: '100%', height: '100%', background: a.color, cursor: 'move' }} />
+              )}
+              {a.type === 'text' && (
+                <div className="ann-text" onMouseDown={(e) => startMove(e, a)}
+                  style={{ color: a.color, fontSize: (a.size || 14) + 'px', whiteSpace: 'pre' }}>{a.text}</div>
+              )}
+              {a.type === 'comment' && (
+                <div className="ann-comment" onMouseDown={(e) => startMove(e, a)}
+                  style={{ whiteSpace: 'pre-wrap' }}>{a.text}</div>
+              )}
+              <span className="ann-handle" onClick={(e) => removeAnn(a.id, e)} title="Delete">×</span>
+            </div>
+          ))}
+          {dragging && (
+            <div className="annotation" style={{ left: dragging.x, top: dragging.y, width: dragging.w, height: dragging.h,
+              background: dragging.color, opacity: dragging.type === 'highlight' ? 0.4 : 1 }} />
+          )}
+          {showPending && pending.type === 'text' && (
+            <div className="annotation" style={{ left: pending.x, top: pending.y }}
+              onMouseDown={(e) => e.stopPropagation()}>
+              <input autoFocus className="ann-inline-input"
+                style={{ color: textColor, fontSize: textSize + 'px' }}
+                value={pending.value}
+                onChange={(e) => setPending({ ...pending, value: e.target.value })}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') {
+                    if (pending.value.trim()) {
+                      setAnnotations((a) => [...a, { id: ++idRef.current, page: pageIndex,
+                        type: 'text', x: pending.x, y: pending.y, text: pending.value,
+                        color: textColor, size: textSize }]);
+                    }
+                    setPending(null);
+                  }
+                  if (e.key === 'Escape') setPending(null);
+                }}
+                placeholder="Type, then Enter..." />
+            </div>
+          )}
+          {showPending && pending.type === 'comment' && (
+            <div className="annotation" style={{ left: pending.x, top: pending.y }}
+              onMouseDown={(e) => e.stopPropagation()}>
+              <div className="flex flex-col gap-1">
+                <textarea autoFocus className="ann-inline-textarea"
+                  value={pending.value}
+                  onChange={(e) => setPending({ ...pending, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Escape') setPending(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  placeholder="Type your comment..." />
+                <div className="flex gap-1">
+                  <button onClick={(e) => {
+                    e.stopPropagation();
+                    if (pending.value.trim()) {
+                      setAnnotations((a) => [...a, { id: ++idRef.current, page: pageIndex,
+                        type: 'comment', x: pending.x, y: pending.y, text: pending.value }]);
+                    }
+                    setPending(null);
+                  }} className="px-2 py-0.5 bg-rose-600 text-white rounded text-xs font-medium">Save</button>
+                  <button onClick={(e) => { e.stopPropagation(); setPending(null); }}
+                    className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-xs">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const EditTool = () => {
+  const [pdfBytes, setPdfBytes] = useState(null);
+  const [pageCount, setPageCount] = useState(0);
+  const [tool, setTool] = useState('select');
+  const [annotations, setAnnotations] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [highlightColor, setHighlightColor] = useState('#fde047');
+  const [redactColor, setRedactColor] = useState('#000000');
+  const [textColor, setTextColor] = useState('#111111');
+  const [textSize, setTextSize] = useState(14);
+  const [pending, setPending] = useState(null);
+  const [zoom, setZoom] = useState(1.5);
+  const idRef = useRef(0);
+  const pageDimsRef = useRef({}); // pageIndex -> {w, h, scale}
+
+  const onPageDims = (i, d) => { pageDimsRef.current[i] = d; };
+
+  const load = async (files) => {
+    const f = files[0]; if (!f) return;
+    setBusy(true);
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      setPdfBytes(bytes);
+      const doc = await PDFDocument.load(bytes);
+      setPageCount(doc.getPageCount());
+      setAnnotations([]);
+      pageDimsRef.current = {};
+    } catch (e) { alert('Load failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  const savePdf = async () => {
+    if (!pdfBytes) return;
+    setBusy(true);
+    try {
+      const doc = await PDFDocument.load(pdfBytes);
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const pdfPages = doc.getPages();
+      for (const ann of annotations) {
+        const page = pdfPages[ann.page];
+        const { width, height } = page.getSize();
+        const dims = pageDimsRef.current[ann.page];
+        const renderScale = dims ? dims.w / width : zoom;
+        const sx = (v) => v / renderScale;
+        const sy = (v) => height - v / renderScale;
+        if (ann.type === 'text') {
+          const c = hexToRgb01(ann.color || '#111111');
+          page.drawText(ann.text, { x: sx(ann.x), y: sy(ann.y) - (ann.size || 14),
+            size: ann.size || 14, font, color: rgb(c.r, c.g, c.b) });
+        } else if (ann.type === 'highlight') {
+          const c = hexToRgb01(ann.color || '#fde047');
+          page.drawRectangle({ x: sx(ann.x), y: sy(ann.y + ann.h),
+            width: ann.w / renderScale, height: ann.h / renderScale,
+            color: rgb(c.r, c.g, c.b), opacity: 0.4 });
+        } else if (ann.type === 'redact') {
+          const c = hexToRgb01(ann.color || '#000000');
+          page.drawRectangle({ x: sx(ann.x), y: sy(ann.y + ann.h),
+            width: ann.w / renderScale, height: ann.h / renderScale,
+            color: rgb(c.r, c.g, c.b), opacity: 1 });
+        } else if (ann.type === 'comment') {
+          const text = ann.text;
+          const lines = text.split('\n');
+          const pad = 4;
+          const fontSize = 10;
+          const lineH = fontSize + 2;
+          const maxW = Math.max(...lines.map(l => font.widthOfTextAtSize(l, fontSize)));
+          const boxW = maxW + pad * 2;
+          const boxH = lines.length * lineH + pad * 2;
+          const boxX = sx(ann.x);
+          const boxY = sy(ann.y) - boxH;
+          page.drawRectangle({ x: boxX, y: boxY, width: boxW, height: boxH,
+            color: rgb(1, 0.95, 0.7), borderColor: rgb(0.96, 0.62, 0.04), borderWidth: 1 });
+          lines.forEach((ln, i) => {
+            page.drawText(ln, { x: boxX + pad,
+              y: boxY + boxH - pad - (i + 1) * lineH + 2,
+              size: fontSize, font, color: rgb(0.47, 0.21, 0.03) });
+          });
+        }
+      }
+      const bytes = await doc.save();
+      downloadBlob(bytes, 'edited.pdf');
+    } catch (e) { alert('Save failed: ' + e.message); }
+    setBusy(false);
+  };
+
+  if (!pdfBytes) {
+    return (
+      <Card title="Edit PDF" subtitle="Select text, add text/comments inline, highlight, or redact areas of a PDF.">
+        <Dropzone accept="application/pdf" onFiles={load} icon="✏️" label="Open a PDF to edit" />
+        {busy && <div className="mt-4"><Spinner label="Loading..." /></div>}
+      </Card>
+    );
+  }
+
+  const ColorRow = ({ colors, value, onChange }) => (
+    <div className="flex items-center gap-1.5">
+      {colors.map(c => (
+        <button key={c} title={c} onClick={() => onChange(c)}
+          className={`color-swatch ${value === c ? 'active' : ''}`}
+          style={{ background: c }} />
+      ))}
+      <input type="color" value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-7 h-7 rounded cursor-pointer border border-slate-200" title="Custom color" />
+    </div>
+  );
+
+  return (
+    <Card title="Edit PDF" subtitle={`${pageCount} pages · scroll to navigate · all edits saved into a single PDF`}>
+      <div className="flex flex-wrap items-center gap-2 mb-3 sticky top-16 bg-white z-10 py-1">
+        {[
+          ['select', '🖱️ Select Text'],
+          ['text', '🅣 Add Text'],
+          ['highlight', '🖍️ Highlight'],
+          ['comment', '💬 Comment'],
+          ['redact', '▮ Redact'],
+        ].map(([k, l]) => (
+          <button key={k} onClick={() => { setTool(k); setPending(null); }}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${tool === k ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+            {l}
+          </button>
+        ))}
+        <div className="mx-2 h-6 w-px bg-slate-200"></div>
+        <label className="text-sm text-slate-600 flex items-center gap-1">
+          Zoom:
+          <select value={zoom} onChange={(e) => setZoom(+e.target.value)}
+            className="ml-1 px-2 py-1 border border-slate-300 rounded text-sm">
+            <option value={1}>100%</option>
+            <option value={1.25}>125%</option>
+            <option value={1.5}>150%</option>
+            <option value={2}>200%</option>
+          </select>
+        </label>
+        <div className="ml-auto flex items-center gap-2">
+          <Button onClick={savePdf} disabled={busy}>{busy ? 'Saving...' : 'Save Edited PDF'}</Button>
+          <Button variant="secondary" onClick={() => { setPdfBytes(null); setAnnotations([]); setPending(null); }}>Open Another</Button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+        {tool === 'select' && <span className="text-slate-600">📋 Drag to select text on any page, then <kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-xs">Ctrl+C</kbd> to copy.</span>}
+        {tool === 'text' && <>
+          <span className="text-slate-600">Color:</span>
+          <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)}
+            className="w-7 h-7 rounded cursor-pointer border border-slate-200" />
+          <span className="text-slate-600 ml-2">Size:</span>
+          <input type="number" value={textSize} min={8} max={72} onChange={(e) => setTextSize(+e.target.value)}
+            className="w-16 px-2 py-1 border border-slate-300 rounded" />
+          <span className="text-slate-500 text-xs ml-2">Click any page to type.</span>
+        </>}
+        {tool === 'highlight' && <>
+          <span className="text-slate-600">Highlight color:</span>
+          <ColorRow colors={HIGHLIGHT_COLORS} value={highlightColor} onChange={setHighlightColor} />
+          <span className="text-slate-500 text-xs ml-2">Drag across text to highlight.</span>
+        </>}
+        {tool === 'comment' && <span className="text-slate-500 text-xs">Click any page — a sticky note opens inline with Save / Cancel.</span>}
+        {tool === 'redact' && <>
+          <span className="text-slate-600">Redact color:</span>
+          <ColorRow colors={REDACT_COLORS} value={redactColor} onChange={setRedactColor} />
+          <span className="text-slate-500 text-xs ml-2">Drag to cover content with a solid block.</span>
+        </>}
+      </div>
+
+      <div className="bg-slate-100 rounded-lg p-4 overflow-auto scroll-thin" style={{ maxHeight: '75vh' }}>
+        {Array.from({ length: pageCount }, (_, i) => (
+          <PageEditor key={i} pageIndex={i} pdfBytes={pdfBytes} scale={zoom} tool={tool}
+            annotations={annotations} setAnnotations={setAnnotations} idRef={idRef}
+            highlightColor={highlightColor} redactColor={redactColor}
+            textColor={textColor} textSize={textSize}
+            pending={pending} setPending={setPending}
+            onPageDims={onPageDims} />
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 mt-3">Drag annotations to reposition · Hover and click <span className="inline-block px-1 bg-rose-600 text-white rounded-full text-[10px]">×</span> to delete · {annotations.length} annotation(s) total.</p>
+    </Card>
+  );
+};
+
+// ====== App Shell ======
+const TOOLS = [
+  { id: 'merge', label: 'Merge PDF', icon: '🔗', desc: 'Combine PDFs' },
+  { id: 'organize', label: 'Organize', icon: '🗂️', desc: 'Reorder / delete' },
+  { id: 'word', label: 'Word → PDF', icon: '📝', desc: 'Convert .docx' },
+  { id: 'image', label: 'Image → PDF', icon: '🖼️', desc: 'JPG/PNG to PDF' },
+  { id: 'edit', label: 'Annotate', icon: '✏️', desc: 'Highlight / comment' },
+  { id: 'ocr', label: 'OCR', icon: '🔎', desc: 'Extract text' },
+];
+
+const App = () => {
+  const [active, setActive] = useState('merge');
+  const Tool = {
+    merge: MergeTool, organize: OrganizeTool, word: WordToPdfTool,
+    image: ImageToPdfTool, edit: EditTool, ocr: OcrTool,
+  }[active];
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-rose-700 flex items-center justify-center text-white font-bold text-lg shadow-sm">M</div>
+            <div>
+              <h1 className="font-bold text-slate-900 leading-tight">Vipin's PDF Suite</h1>
+              <p className="text-xs text-rose-600 font-medium leading-tight">Miyee PDF</p>
+            </div>
+          </div>
+          <div className="ml-auto text-xs text-slate-500 hidden sm:block">100% client-side · your files never leave your browser</div>
+        </div>
+      </header>
+      <div className="max-w-7xl mx-auto w-full px-6 py-6 grid grid-cols-12 gap-6 flex-1">
+        <aside className="col-span-12 md:col-span-3 lg:col-span-2">
+          <nav className="bg-white border border-slate-200 rounded-2xl p-2 sticky top-20">
+            {TOOLS.map((t) => (
+              <button key={t.id} onClick={() => setActive(t.id)}
+                className={`w-full text-left px-3 py-2.5 rounded-lg mb-1 flex items-center gap-3 transition ${active === t.id ? 'bg-rose-50 text-rose-700' : 'hover:bg-slate-50 text-slate-700'}`}>
+                <span className="text-xl">{t.icon}</span>
+                <div className="flex-1">
+                  <div className="text-sm font-semibold">{t.label}</div>
+                  <div className="text-xs text-slate-500">{t.desc}</div>
+                </div>
+              </button>
+            ))}
+          </nav>
+        </aside>
+        <main className="col-span-12 md:col-span-9 lg:col-span-10">
+          <Tool />
+        </main>
+      </div>
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="max-w-7xl mx-auto px-6 py-4 text-xs text-slate-500 flex flex-wrap justify-between gap-2">
+          <span>© Vipin's PDF Suite — Miyee PDF</span>
+          <span className="font-semibold text-slate-700">Built by Vipin · for users who care about <span className="text-rose-600">Data Safety</span></span>
+        </div>
+        <div className="bg-slate-50 border-t border-slate-200">
+          <div className="max-w-7xl mx-auto px-6 py-5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-base">🔒</span>
+              <h3 className="text-sm font-bold text-slate-800">Data Safety Protocol</h3>
+              <span className="text-[10px] font-semibold px-2 py-0.5 bg-green-100 text-green-700 rounded-full uppercase tracking-wide">100% Local</span>
+            </div>
+            <ul className="text-xs text-slate-600 space-y-1.5 leading-relaxed">
+              <li><strong className="text-slate-800">No uploads.</strong> Every file you open is processed entirely in your browser. Nothing is ever sent to any server, cloud, or third party.</li>
+              <li><strong className="text-slate-800">No tracking.</strong> No analytics, no cookies, no telemetry, no fingerprinting. Open the page offline and it still works.</li>
+              <li><strong className="text-slate-800">No persistence.</strong> Files live only in memory while the tab is open. Close the tab and every trace is gone — nothing is written to disk except the PDFs you choose to download.</li>
+              <li><strong className="text-slate-800">No accounts.</strong> No sign-in, no email collected, no profile built.</li>
+              <li><strong className="text-slate-800">OCR runs on-device.</strong> Tesseract.js executes in a Web Worker on your machine. Language models are cached locally by your browser after first download.</li>
+            </ul>
+            <p className="text-[11px] text-slate-500 mt-3 italic">Your documents stay on your computer. Always.</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
